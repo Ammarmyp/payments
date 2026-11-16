@@ -1,0 +1,43 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Go build artifacts
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+profile.cov
+
+# Go workspace
+go.work
+go.work.sum
+
+# Dependency / vendor (prefer go modules)
+# Uncomment if you do not commit vendor/
+# vendor/
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs / temp
+*.log
+tmp/
+temp/

@@ -3,7 +3,7 @@ SERVICE ?= wallet
 DB_URL  ?= postgres://payments-pg-user:payments-pg-password@localhost:5432/$(SERVICE)?sslmode=disable
 MIGRATE := migrate -path db/$(SERVICE)/migrations -database "$(DB_URL)"
 
-.PHONY: migrate-up migrate-down migrate-version migrate-new
+.PHONY: migrate-up migrate-down migrate-version migrate-new sqlc
 
 migrate-up:
 	@$(MIGRATE) up
@@ -17,3 +17,8 @@ migrate-version:
 migrate-new:
 	@test -n "$(name)" || (echo "usage: make migrate-new name=add_something" && exit 1)
 	migrate create -ext sql -dir db/$(SERVICE)/migrations -seq $(name)
+
+# Regenerate Wallet sqlc code from db/wallet/schema.sql + db/wallet/queries.
+# Schema snapshot must stay in sync with migrations by hand.
+sqlc:
+	sqlc generate

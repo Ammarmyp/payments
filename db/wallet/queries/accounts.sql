@@ -20,3 +20,8 @@ SELECT *
 FROM accounts
 WHERE owner_id = $1
 ORDER BY created_at, id;
+
+-- name: GetAccountBalance :one
+SELECT account_id, name, currency, balance
+FROM account_balances
+WHERE account_id = $1;

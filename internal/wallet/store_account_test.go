@@ -9,25 +9,34 @@ import (
 	"github.com/Ammarmyp/payments/internal/platform/postgres"
 	"github.com/Ammarmyp/payments/internal/wallet"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func testStore(t *testing.T) *wallet.Store {
+func testDatabaseURL(t *testing.T) string {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("TEST_DATABASE_URL not set; skipping Wallet store integration tests")
 	}
+	return url
+}
 
+func testPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
 
-	pool, err := postgres.Open(ctx, postgres.DefaultConfig(url))
+	pool, err := postgres.Open(ctx, postgres.DefaultConfig(testDatabaseURL(t)))
 	if err != nil {
 		t.Fatalf("open pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	return pool
+}
 
-	return wallet.NewStore(pool)
+func testStore(t *testing.T) *wallet.Store {
+	t.Helper()
+	return wallet.NewStore(testPool(t))
 }
 
 func TestStoreCreateOwnedAccount(t *testing.T) {

@@ -72,6 +72,24 @@ func (q *Queries) GetAccount(ctx context.Context, id uuid.UUID) (Account, error)
 	return i, err
 }
 
+const getAccountBalance = `-- name: GetAccountBalance :one
+SELECT account_id, name, currency, balance
+FROM account_balances
+WHERE account_id = $1
+`
+
+func (q *Queries) GetAccountBalance(ctx context.Context, accountID uuid.UUID) (AccountBalance, error) {
+	row := q.db.QueryRow(ctx, getAccountBalance, accountID)
+	var i AccountBalance
+	err := row.Scan(
+		&i.AccountID,
+		&i.Name,
+		&i.Currency,
+		&i.Balance,
+	)
+	return i, err
+}
+
 const listAccountsByOwner = `-- name: ListAccountsByOwner :many
 SELECT id, owner_id, name, currency, normal_balance, created_at
 FROM accounts

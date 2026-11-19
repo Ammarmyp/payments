@@ -1,5 +1,9 @@
 ## Agent skills
 
+### Local bootstrap
+
+After opening the repo: `make bootstrap`, then `make run-wallet` / `make test`. See `docs/dev-bootstrap.md`.
+
 ### Issue tracker
 
 Issues live as markdown under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.

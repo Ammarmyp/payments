@@ -2,7 +2,7 @@ version: "2"
 sql:
   - engine: "postgresql"
     queries: "db/wallet/queries"
-    schema: "db/wallet/schema.sql"
+    schema: "db/wallet/migrations"
     gen:
       go:
         package: "db"

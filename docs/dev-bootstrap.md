@@ -42,7 +42,7 @@ Smoke the process: `GET http://localhost:8081/healthz` and `GET http://localhost
 | `make migrate-down` | Roll back one migration |
 | `make migrate-version` | Print migration version |
 | `make migrate-new name=...` | Create a new migration pair |
-| `make sqlc` | Regenerate Wallet sqlc code |
+| `make sqlc` | Regenerate Wallet sqlc from migrations + queries |
 | `make run-wallet` | `go run ./cmd/wallet` |
 | `make test` | `go test ./...` with `TEST_DATABASE_URL` |
 
@@ -61,4 +61,5 @@ Do not put real secrets in `.env.example`. `.env` is gitignored.
 - Init script `deploy/postgres/01-create-database.sql` creates `wallet`, `auth`, and `transfer` databases on first volume create only.
 - Redis and NATS start with compose but are not required for Wallet foundation work yet.
 - Other services: `make migrate-up SERVICE=auth` (builds DB URL from `POSTGRES_USER` / `POSTGRES_PASSWORD`).
-- After changing sqlc query/schema files: `make sqlc`.
+- After changing Wallet migrations or sqlc query files: `make sqlc` (sqlc validates queries against `db/wallet/migrations` `*.up.sql`).
+- New migrations: use `make migrate-new name=...` so names stay zero-padded and sqlc order matches golang-migrate.

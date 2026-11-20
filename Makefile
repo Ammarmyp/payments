@@ -57,8 +57,8 @@ migrate-new:
 	$(if $(strip $(name)),,$(error usage: make migrate-new name=add_something))
 	migrate create -ext sql -dir db/$(SERVICE)/migrations -seq $(name)
 
-# Regenerate Wallet sqlc code from db/wallet/schema.sql + db/wallet/queries.
-# Schema snapshot must stay in sync with migrations by hand.
+# Regenerate Wallet sqlc code from db/wallet/migrations (*.up.sql) + queries.
+# Keep zero-padded migrate -seq names so sqlc lexical order matches apply order.
 sqlc:
 	sqlc generate
 

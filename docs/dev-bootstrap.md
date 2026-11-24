@@ -52,6 +52,8 @@ Smoke the process: `GET http://localhost:8081/healthz` and `GET http://localhost
 |----------|---------|
 | `POSTGRES_*`, `REDIS_PASSWORD` | Docker Compose |
 | `DATABASE_URL` | Wallet process, Wallet migrations |
+| `LOG_LEVEL` | Wallet process (`debug`/`info`/`warn`/`error`, default `info`) |
+| `LOG_FORMAT` | Wallet process (`text` or `json`, default `text`) |
 | `TEST_DATABASE_URL` | Integration tests |
 
 Do not put real secrets in `.env.example`. `.env` is gitignored.

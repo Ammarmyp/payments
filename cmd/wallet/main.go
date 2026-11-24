@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,12 +11,41 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Ammarmyp/payments/internal/platform/config"
+	"github.com/Ammarmyp/payments/internal/platform/httpx"
+	"github.com/Ammarmyp/payments/internal/platform/logging"
 	"github.com/Ammarmyp/payments/internal/platform/postgres"
 	"github.com/Ammarmyp/payments/internal/wallet"
 )
 
+const (
+	serviceName    = "wallet"
+	serviceVersion = "dev"
+)
+
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	c := config.New(os.LookupEnv)
+	logCfg := config.LogConfig{
+		Level:  config.Parse(c, "LOG_LEVEL", slog.LevelInfo, logging.ParseLevel),
+		Format: config.Parse(c, "LOG_FORMAT", logging.FormatText, logging.ParseFormat),
+	}
+	if err := c.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	logger, err := logging.New(logging.Options{
+		Writer:  os.Stdout,
+		Service: serviceName,
+		Version: serviceVersion,
+		Level:   logCfg.Level,
+		Format:  logCfg.Format,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	slog.SetDefault(logger)
 
 	cfg, err := postgres.ConfigFromEnv()
 	if err != nil {
@@ -38,9 +68,15 @@ func main() {
 	mux := http.NewServeMux()
 	wallet.NewHealthHandler(pool, gate).Register(mux)
 
+	handler := httpx.Chain(
+		httpx.Recover(logger, mux),
+		httpx.RequestID,
+		httpx.AccessLog(logger),
+	)
+
 	srv := &http.Server{
 		Addr:              ":8081",
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

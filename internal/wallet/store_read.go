@@ -2,9 +2,11 @@ package wallet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // AccountBalance is the Amount implied by an Account's Entries relative to its Normal Balance.
@@ -46,6 +48,9 @@ func (s *Store) ListEntriesByAccount(ctx context.Context, accountID uuid.UUID) (
 // GetAccountBalance reads the derived Account Balance for an Account.
 func (s *Store) GetAccountBalance(ctx context.Context, accountID uuid.UUID) (AccountBalance, error) {
 	row, err := s.q.GetAccountBalance(ctx, accountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AccountBalance{}, ErrAccountNotFound
+	}
 	if err != nil {
 		return AccountBalance{}, fmt.Errorf("wallet: get account balance: %w", err)
 	}

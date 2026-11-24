@@ -188,11 +188,10 @@ func setTestLogger(t *testing.T, log *slog.Logger) {
 
 func TestWriteJSONEncodesSuccessBody(t *testing.T) {
 	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	payload := map[string]string{"status": "ok"}
 
-	if err := httpx.WriteJSON(rec, http.StatusOK, payload); err != nil {
-		t.Fatalf("WriteJSON: %v", err)
-	}
+	httpx.WriteJSON(rec, req, http.StatusOK, payload)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}

@@ -112,9 +112,10 @@ func serve(t *testing.T, pinger wallet.Pinger, gate *wallet.ReadyGate, path stri
 		t.Fatalf("logging.New: %v", err)
 	}
 	handler := httpx.Chain(
-		httpx.Recover(log, mux),
+		mux,
 		httpx.RequestID,
 		httpx.AccessLog(log),
+		httpx.Recover(log),
 	)
 
 	req := httptest.NewRequest(http.MethodGet, path, nil)

@@ -22,7 +22,7 @@ func TestRecoverRespondsInternalAndLogsErrorWithRequestID(t *testing.T) {
 	slog.SetDefault(log)
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	h := httpx.RequestID(httpx.Recover(log, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	h := httpx.RequestID(httpx.Recover(log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("boom")
 	})))
 
@@ -40,7 +40,7 @@ func TestRecoverRespondsInternalAndLogsErrorWithRequestID(t *testing.T) {
 	}
 
 	line := findLogLine(t, buf.Bytes(), func(m map[string]any) bool {
-		return m["level"] == "ERROR" && m["msg"] == "panic"
+		return m["level"] == "ERROR" && m["msg"] == "panic recovered"
 	})
 	if line["request_id"] != "panic-req-1" {
 		t.Fatalf("request_id = %v, want panic-req-1\nlogs=%s", line["request_id"], buf.String())
@@ -48,6 +48,37 @@ func TestRecoverRespondsInternalAndLogsErrorWithRequestID(t *testing.T) {
 	if !strings.Contains(fmt.Sprint(line["panic"]), "boom") {
 		t.Fatalf("panic attr missing boom: %#v", line["panic"])
 	}
+	if !strings.Contains(fmt.Sprint(line["stack"]), "runtime/debug.Stack") {
+		t.Fatalf("stack attr missing debug.Stack frame: %#v", line["stack"])
+	}
+}
+
+func TestRecoverRethrowsErrAbortHandler(t *testing.T) {
+	var buf bytes.Buffer
+	log := mustLogger(t, &buf)
+
+	h := httpx.Recover(log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic(http.ErrAbortHandler)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+
+	defer func() {
+		v := recover()
+		if v != http.ErrAbortHandler {
+			t.Fatalf("recover = %v, want http.ErrAbortHandler", v)
+		}
+		if buf.Len() != 0 {
+			t.Fatalf("expected no log for deliberate abort, got %s", buf.String())
+		}
+		if rec.Body.Len() != 0 {
+			t.Fatalf("expected no body for deliberate abort, got %s", rec.Body.String())
+		}
+	}()
+
+	h.ServeHTTP(rec, req)
+	t.Fatal("expected panic(http.ErrAbortHandler)")
 }
 
 func TestRecoverMintsRequestIDWhenInboundMissing(t *testing.T) {
@@ -57,7 +88,7 @@ func TestRecoverMintsRequestIDWhenInboundMissing(t *testing.T) {
 	slog.SetDefault(log)
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	h := httpx.RequestID(httpx.Recover(log, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	h := httpx.RequestID(httpx.Recover(log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("boom")
 	})))
 
@@ -71,7 +102,7 @@ func TestRecoverMintsRequestIDWhenInboundMissing(t *testing.T) {
 		t.Fatal("expected minted request id")
 	}
 	line := findLogLine(t, buf.Bytes(), func(m map[string]any) bool {
-		return m["level"] == "ERROR" && m["msg"] == "panic"
+		return m["level"] == "ERROR" && m["msg"] == "panic recovered"
 	})
 	if line["request_id"] != id {
 		t.Fatalf("request_id = %v, want %s", line["request_id"], id)

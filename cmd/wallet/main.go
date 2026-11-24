@@ -69,9 +69,10 @@ func main() {
 	wallet.NewHealthHandler(pool, gate).Register(mux)
 
 	handler := httpx.Chain(
-		httpx.Recover(logger, mux),
+		mux,
 		httpx.RequestID,
 		httpx.AccessLog(logger),
+		httpx.Recover(logger),
 	)
 
 	srv := &http.Server{

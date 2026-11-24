@@ -3,12 +3,16 @@ package wallet_test
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Ammarmyp/payments/internal/platform/httpx"
+	"github.com/Ammarmyp/payments/internal/platform/logging"
 	"github.com/Ammarmyp/payments/internal/wallet"
 )
 
@@ -70,18 +74,14 @@ func (blockingPinger) Ping(ctx context.Context) error {
 }
 
 func TestReadyzFailsWhenPingTimesOut(t *testing.T) {
-	mux := http.NewServeMux()
 	gate := wallet.NewReadyGate()
 	gate.SetReady(true)
-	wallet.NewHealthHandler(blockingPinger{}, gate).Register(mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
-	rec := httptest.NewRecorder()
 
 	done := make(chan struct{})
+	var rec *httptest.ResponseRecorder
 	go func() {
 		defer close(done)
-		mux.ServeHTTP(rec, req)
+		rec = serve(t, blockingPinger{}, gate, "/readyz")
 	}()
 
 	select {
@@ -101,9 +101,29 @@ func serve(t *testing.T, pinger wallet.Pinger, gate *wallet.ReadyGate, path stri
 	mux := http.NewServeMux()
 	wallet.NewHealthHandler(pinger, gate).Register(mux)
 
+	log, err := logging.New(logging.Options{
+		Writer:  io.Discard,
+		Service: "wallet",
+		Version: "dev",
+		Level:   slog.LevelInfo,
+		Format:  logging.FormatJSON,
+	})
+	if err != nil {
+		t.Fatalf("logging.New: %v", err)
+	}
+	handler := httpx.Chain(
+		mux,
+		httpx.RequestID,
+		httpx.AccessLog(log),
+		httpx.Recover(log),
+	)
+
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	handler.ServeHTTP(rec, req)
+	if rec.Header().Get(httpx.RequestIDHeader) == "" {
+		t.Fatalf("missing %s on response", httpx.RequestIDHeader)
+	}
 	return rec
 }
 

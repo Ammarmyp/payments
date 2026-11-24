@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/Ammarmyp/payments/internal/platform/httpx"
 )
 
 const readyPingTimeout = 2 * time.Second
@@ -52,13 +54,13 @@ func (h *HealthHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /readyz", h.readyz)
 }
 
-func (h *HealthHandler) healthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, `{"status":"ok"}`+"\n")
+func (h *HealthHandler) healthz(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (h *HealthHandler) readyz(w http.ResponseWriter, r *http.Request) {
 	if h.gate == nil || !h.gate.Ready() || h.pinger == nil {
-		writeJSON(w, http.StatusServiceUnavailable, `{"status":"unavailable"}`+"\n")
+		httpx.WriteJSON(w, r, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
 		return
 	}
 
@@ -66,15 +68,9 @@ func (h *HealthHandler) readyz(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := h.pinger.Ping(ctx); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, `{"status":"unavailable"}`+"\n")
+		httpx.WriteJSON(w, r, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, `{"status":"ok"}`+"\n")
-}
-
-func writeJSON(w http.ResponseWriter, status int, body string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write([]byte(body))
+	httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "ok"})
 }

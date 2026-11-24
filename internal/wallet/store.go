@@ -2,12 +2,15 @@ package wallet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"time"
 
+	"github.com/Ammarmyp/payments/internal/platform/apperr"
 	"github.com/Ammarmyp/payments/internal/wallet/db"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -18,6 +21,9 @@ const (
 	NormalBalanceDebit  NormalBalance = "debit"
 	NormalBalanceCredit NormalBalance = "credit"
 )
+
+// ErrAccountNotFound means no account exists for the requested id.
+var ErrAccountNotFound = fmt.Errorf("account: %w", apperr.ErrNotFound)
 
 var currencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
 
@@ -74,6 +80,9 @@ func (s *Store) CreateAccount(ctx context.Context, params CreateAccountParams) (
 // GetAccount loads an Account by ID.
 func (s *Store) GetAccount(ctx context.Context, id uuid.UUID) (Account, error) {
 	row, err := s.q.GetAccount(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Account{}, ErrAccountNotFound
+	}
 	if err != nil {
 		return Account{}, fmt.Errorf("wallet: get account: %w", err)
 	}

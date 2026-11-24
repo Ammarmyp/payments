@@ -148,6 +148,16 @@ func Open(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
+// NewPool opens a pool for databaseURL with the given max connections and
+// otherwise conservative defaults.
+func NewPool(ctx context.Context, databaseURL string, maxConns int32) (*pgxpool.Pool, error) {
+	cfg := DefaultConfig(databaseURL)
+	if maxConns > 0 {
+		cfg.MaxConns = maxConns
+	}
+	return Open(ctx, cfg)
+}
+
 func envInt32(key string) (int32, bool, error) {
 	raw := os.Getenv(key)
 	if raw == "" {

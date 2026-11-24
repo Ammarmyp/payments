@@ -43,7 +43,7 @@ Smoke the process: `GET http://localhost:8081/healthz` and `GET http://localhost
 | `make migrate-version` | Print migration version |
 | `make migrate-new name=...` | Create a new migration pair |
 | `make sqlc` | Regenerate Wallet sqlc from migrations + queries |
-| `make run-wallet` | `go run ./cmd/wallet` |
+| `make run-wallet` | Build `bin/wallet` (git `VERSION` ldflags) then run it |
 | `make test` | `go test ./...` with `TEST_DATABASE_URL` |
 
 ## Env vars (`.env`)
@@ -51,9 +51,13 @@ Smoke the process: `GET http://localhost:8081/healthz` and `GET http://localhost
 | Variable | Used by |
 |----------|---------|
 | `POSTGRES_*`, `REDIS_PASSWORD` | Docker Compose |
+| `APP_ENV` | Wallet process (`development`/`production`, default `development`) |
+| `WALLET_HTTP_ADDR` | Wallet process (default `:8081`) |
+| `WALLET_SHUTDOWN_TIMEOUT` | Wallet process (default `10s`) |
 | `DATABASE_URL` | Wallet process, Wallet migrations |
+| `DATABASE_MAX_CONNS` | Wallet process (default `10`, range 1–100) |
 | `LOG_LEVEL` | Wallet process (`debug`/`info`/`warn`/`error`, default `info`) |
-| `LOG_FORMAT` | Wallet process (`text` or `json`, default `text`) |
+| `LOG_FORMAT` | Wallet process (`text` or `json`; default `text` in development, `json` in production) |
 | `TEST_DATABASE_URL` | Integration tests |
 
 Do not put real secrets in `.env.example`. `.env` is gitignored.

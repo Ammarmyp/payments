@@ -13,6 +13,9 @@ endif
 
 MIGRATE := migrate -path db/$(SERVICE)/migrations -database "$(DB_URL)"
 
+# Stamped into binaries via -ldflags (see run-wallet).
+VERSION ?= $(shell git describe --always --dirty)
+
 .PHONY: bootstrap up down migrate-up migrate-down migrate-version migrate-new sqlc test run-wallet
 
 define require_env_file
@@ -66,6 +69,8 @@ test:
 	$(call require_test_database_url)
 	go test ./...
 
+# Build then run Wallet against the local database, stamped with VERSION.
 run-wallet:
 	$(call require_database_url)
-	go run ./cmd/wallet
+	@go build -ldflags "-X main.version=$(VERSION)" -o bin/wallet ./cmd/wallet
+	@./bin/wallet

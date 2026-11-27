@@ -23,6 +23,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /v1/wallets", httpx.HandlerFunc(h.create))
 	mux.Handle("GET /v1/wallets/{id}", httpx.HandlerFunc(h.get))
 	mux.Handle("GET /v1/wallets/{id}/balance", httpx.HandlerFunc(h.balance))
+	mux.Handle("POST /v1/wallets/{id}/deposits", httpx.HandlerFunc(h.deposit))
 }
 
 type createWalletRequest struct {
@@ -38,6 +39,17 @@ type walletResponse struct {
 }
 
 type moneyResponse struct {
+	Amount   int64  `json:"amount"`
+	Currency string `json:"currency"`
+}
+
+type depositRequest struct {
+	Amount   int64  `json:"amount"`
+	Currency string `json:"currency"`
+}
+
+type depositResponse struct {
+	ID       string `json:"id"`
 	Amount   int64  `json:"amount"`
 	Currency string `json:"currency"`
 }
@@ -78,6 +90,27 @@ func (h *Handler) balance(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpx.WriteJSON(w, r, http.StatusOK, moneyResponse{Amount: bal.Amount, Currency: bal.Currency})
+	return nil
+}
+
+func (h *Handler) deposit(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseWalletID(r)
+	if err != nil {
+		return err
+	}
+	var req depositRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	result, err := h.svc.Deposit(r.Context(), id, req.Amount, req.Currency)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, r, http.StatusCreated, depositResponse{
+		ID:       result.ID.String(),
+		Amount:   result.Money.Amount,
+		Currency: result.Money.Currency,
+	})
 	return nil
 }
 

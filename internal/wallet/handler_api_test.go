@@ -168,6 +168,149 @@ func TestUnmatchedRouteReturnsJSON404(t *testing.T) {
 	assertAPIError(t, rec, http.StatusNotFound, "not_found", "")
 }
 
+func TestDepositReturns201(t *testing.T) {
+	h := newAPIHandler(t)
+	created := createWallet(t, h, uuid.New().String(), "USD")
+
+	rec := apiRequest(t, h, http.MethodPost, "/v1/wallets/"+created.ID+"/deposits", map[string]any{
+		"amount":   1500,
+		"currency": "USD",
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d\nbody=%s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	var body struct {
+		ID         string `json:"id"`
+		Amount     int64  `json:"amount"`
+		Currency   string `json:"currency"`
+		Entries    any    `json:"entries"`
+		Settlement any    `json:"settlement"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v\nbody=%s", err, rec.Body.String())
+	}
+	if _, err := uuid.Parse(body.ID); err != nil {
+		t.Fatalf("id: %v", err)
+	}
+	if body.Amount != 1500 || body.Currency != "USD" {
+		t.Fatalf("money = {%d %q}, want {1500 USD}", body.Amount, body.Currency)
+	}
+	if body.Entries != nil || body.Settlement != nil {
+		t.Fatalf("response leaked ledger internals: %#v", body)
+	}
+}
+
+func TestDepositIncreasesBalance(t *testing.T) {
+	h := newAPIHandler(t)
+	created := createWallet(t, h, uuid.New().String(), "ETB")
+
+	dep := apiRequest(t, h, http.MethodPost, "/v1/wallets/"+created.ID+"/deposits", map[string]any{
+		"amount":   250,
+		"currency": "ETB",
+	})
+	if dep.Code != http.StatusCreated {
+		t.Fatalf("deposit status = %d\nbody=%s", dep.Code, dep.Body.String())
+	}
+
+	rec := apiRequest(t, h, http.MethodGet, "/v1/wallets/"+created.ID+"/balance", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("balance status = %d\nbody=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Amount   int64  `json:"amount"`
+		Currency string `json:"currency"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v\nbody=%s", err, rec.Body.String())
+	}
+	if body.Amount != 250 || body.Currency != "ETB" {
+		t.Fatalf("balance = %#v, want amount=250 currency=ETB", body)
+	}
+}
+
+func TestDepositRejectsNonPositiveAmount(t *testing.T) {
+	h := newAPIHandler(t)
+	created := createWallet(t, h, uuid.New().String(), "USD")
+
+	rec := apiRequest(t, h, http.MethodPost, "/v1/wallets/"+created.ID+"/deposits", map[string]any{
+		"amount":   0,
+		"currency": "USD",
+	})
+	assertAPIError(t, rec, http.StatusUnprocessableEntity, "invalid_input", "amount")
+}
+
+func TestDepositRejectsAmountAboveMax(t *testing.T) {
+	h := newAPIHandler(t)
+	created := createWallet(t, h, uuid.New().String(), "USD")
+
+	rec := apiRequest(t, h, http.MethodPost, "/v1/wallets/"+created.ID+"/deposits", map[string]any{
+		"amount":   wallet.MaxAmount + 1,
+		"currency": "USD",
+	})
+	assertAPIError(t, rec, http.StatusUnprocessableEntity, "invalid_input", "amount")
+}
+
+func TestDepositRejectsCurrencyMismatch(t *testing.T) {
+	h := newAPIHandler(t)
+	created := createWallet(t, h, uuid.New().String(), "USD")
+
+	rec := apiRequest(t, h, http.MethodPost, "/v1/wallets/"+created.ID+"/deposits", map[string]any{
+		"amount":   100,
+		"currency": "ETB",
+	})
+	assertAPIError(t, rec, http.StatusUnprocessableEntity, "invalid_input", "currency")
+}
+
+func TestDepositRepeatedCreatesDistinctTransactions(t *testing.T) {
+	h := newAPIHandler(t)
+	created := createWallet(t, h, uuid.New().String(), "USD")
+	body := map[string]any{"amount": 10, "currency": "USD"}
+
+	first := apiRequest(t, h, http.MethodPost, "/v1/wallets/"+created.ID+"/deposits", body)
+	second := apiRequest(t, h, http.MethodPost, "/v1/wallets/"+created.ID+"/deposits", body)
+	if first.Code != http.StatusCreated || second.Code != http.StatusCreated {
+		t.Fatalf("statuses = %d, %d\nbodies=%s\n%s", first.Code, second.Code, first.Body.String(), second.Body.String())
+	}
+
+	var a, b struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &a); err != nil {
+		t.Fatalf("decode first: %v", err)
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &b); err != nil {
+		t.Fatalf("decode second: %v", err)
+	}
+	if a.ID == "" || a.ID == b.ID {
+		t.Fatalf("expected distinct transaction ids, got %q and %q", a.ID, b.ID)
+	}
+}
+
+func TestDepositMissingWalletIs404(t *testing.T) {
+	h := newAPIHandler(t)
+	rec := apiRequest(t, h, http.MethodPost, "/v1/wallets/"+uuid.New().String()+"/deposits", map[string]any{
+		"amount":   100,
+		"currency": "USD",
+	})
+	assertAPIError(t, rec, http.StatusNotFound, "not_found", "")
+}
+
+func TestDepositSystemAccountIs404(t *testing.T) {
+	h := newAPIHandler(t)
+	store := testStore(t)
+	settlement, err := store.SystemAccount(t.Context(), wallet.SettlementAccount, "USD")
+	if err != nil {
+		t.Fatalf("SystemAccount: %v", err)
+	}
+
+	rec := apiRequest(t, h, http.MethodPost, "/v1/wallets/"+settlement.ID.String()+"/deposits", map[string]any{
+		"amount":   100,
+		"currency": "USD",
+	})
+	assertAPIError(t, rec, http.StatusNotFound, "not_found", "")
+}
+
 type walletBody struct {
 	ID            string `json:"id"`
 	OwnerID       string `json:"owner_id"`

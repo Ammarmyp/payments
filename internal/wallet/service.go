@@ -12,6 +12,9 @@ import (
 // SettlementAccount is the System Account name that funds deposits for a Currency.
 const SettlementAccount = "settlement"
 
+// MaxAmount is the largest single deposit in minor units.
+const MaxAmount int64 = 100_000_000
+
 // ErrWalletNotFound means the requested owned Account does not exist (or is not visible).
 var ErrWalletNotFound = fmt.Errorf("wallet: %w", apperr.ErrNotFound)
 
@@ -92,6 +95,58 @@ func (s *Service) Balance(ctx context.Context, id uuid.UUID) (Money, error) {
 		return Money{}, fmt.Errorf("wallet: balance: %w", err)
 	}
 	return Money{Amount: bal.Balance, Currency: bal.Currency}, nil
+}
+
+// DepositResult is a posted deposit: Ledger Transaction id and deposited Money.
+type DepositResult struct {
+	ID    uuid.UUID
+	Money Money
+}
+
+// Deposit adds external funds to an owned Account via Settlement.
+func (s *Service) Deposit(ctx context.Context, id uuid.UUID, amount int64, currency string) (DepositResult, error) {
+	account, err := s.ownedAccount(ctx, id)
+	if err != nil {
+		return DepositResult{}, err
+	}
+
+	var v apperr.ValidationError
+	if amount <= 0 {
+		v.Add("amount", "must be greater than zero")
+	} else if amount > MaxAmount {
+		v.Add("amount", "exceeds maximum")
+	}
+	if currency != account.Currency {
+		v.Add("currency", "must match wallet currency")
+	}
+	if err := v.Err(); err != nil {
+		return DepositResult{}, err
+	}
+
+	settlement, err := s.store.SystemAccount(ctx, SettlementAccount, account.Currency)
+	if err != nil {
+		if errors.Is(err, ErrAccountNotFound) {
+			return DepositResult{}, fmt.Errorf("wallet: settlement missing for %s", account.Currency)
+		}
+		return DepositResult{}, fmt.Errorf("wallet: lookup settlement: %w", err)
+	}
+
+	txID := uuid.New()
+	posted, err := s.store.PostLedgerTransaction(ctx, PostLedgerTransactionParams{
+		ID:          txID,
+		Description: "deposit",
+		Entries: []EntryInput{
+			{AccountID: settlement.ID, Direction: EntryDirectionDebit, Amount: amount, Currency: account.Currency},
+			{AccountID: account.ID, Direction: EntryDirectionCredit, Amount: amount, Currency: account.Currency},
+		},
+	})
+	if err != nil {
+		return DepositResult{}, fmt.Errorf("wallet: deposit: %w", err)
+	}
+	return DepositResult{
+		ID:    posted.ID,
+		Money: Money{Amount: amount, Currency: account.Currency},
+	}, nil
 }
 
 func (s *Service) ownedAccount(ctx context.Context, id uuid.UUID) (Account, error) {

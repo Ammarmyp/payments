@@ -11,6 +11,7 @@ import (
 	"github.com/Ammarmyp/payments/internal/wallet/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,8 +23,19 @@ const (
 	NormalBalanceCredit NormalBalance = "credit"
 )
 
+// AccountKind is whether an Account is wallet (owned) or system (platform).
+type AccountKind string
+
+const (
+	KindWallet AccountKind = "wallet"
+	KindSystem AccountKind = "system"
+)
+
 // ErrAccountNotFound means no account exists for the requested id.
 var ErrAccountNotFound = fmt.Errorf("account: %w", apperr.ErrNotFound)
+
+// ErrAccountExists means an Account uniqueness constraint rejected the insert.
+var ErrAccountExists = fmt.Errorf("wallet: account already exists: %w", apperr.ErrConflict)
 
 var currencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
 
@@ -34,10 +46,11 @@ type Account struct {
 	Name          string
 	Currency      string
 	NormalBalance NormalBalance
+	Kind          AccountKind
 	CreatedAt     time.Time
 }
 
-// CreateAccountParams creates an Owner-linked Account (Owner set) or System Account (Owner nil).
+// CreateAccountParams creates an Owner-linked wallet Account or a System Account.
 // ID must be application-generated (non-nil) so callers know the identifier before commit.
 type CreateAccountParams struct {
 	ID            uuid.UUID
@@ -45,6 +58,7 @@ type CreateAccountParams struct {
 	Name          string
 	Currency      string
 	NormalBalance NormalBalance
+	Kind          AccountKind
 }
 
 // Store persists Wallet ledger data through sqlc-generated queries.
@@ -58,7 +72,7 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool, q: db.New(pool)}
 }
 
-// CreateAccount inserts an Account. Null OwnerID creates a System Account.
+// CreateAccount inserts an Account. Kind and OwnerID must agree (wallet has Owner; system has none).
 func (s *Store) CreateAccount(ctx context.Context, params CreateAccountParams) (Account, error) {
 	if err := validateCreateAccount(params); err != nil {
 		return Account{}, err
@@ -70,8 +84,12 @@ func (s *Store) CreateAccount(ctx context.Context, params CreateAccountParams) (
 		Name:          params.Name,
 		Currency:      params.Currency,
 		NormalBalance: db.EntryDirection(params.NormalBalance),
+		Kind:          db.AccountKind(params.Kind),
 	})
 	if err != nil {
+		if isUniqueViolation(err) {
+			return Account{}, fmt.Errorf("%w: %v", ErrAccountExists, err)
+		}
 		return Account{}, fmt.Errorf("wallet: create account: %w", err)
 	}
 	return accountFromDB(row)
@@ -85,6 +103,27 @@ func (s *Store) GetAccount(ctx context.Context, id uuid.UUID) (Account, error) {
 	}
 	if err != nil {
 		return Account{}, fmt.Errorf("wallet: get account: %w", err)
+	}
+	return accountFromDB(row)
+}
+
+// SystemAccount returns a System Account by name and Currency (for example Settlement).
+func (s *Store) SystemAccount(ctx context.Context, name, currency string) (Account, error) {
+	if name == "" {
+		return Account{}, fmt.Errorf("wallet: system account name must be non-empty")
+	}
+	if !currencyPattern.MatchString(currency) {
+		return Account{}, fmt.Errorf("wallet: currency must be ISO 4217 alphabetic code")
+	}
+	row, err := s.q.GetSystemAccount(ctx, db.GetSystemAccountParams{
+		Name:     name,
+		Currency: currency,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Account{}, ErrAccountNotFound
+	}
+	if err != nil {
+		return Account{}, fmt.Errorf("wallet: get system account: %w", err)
 	}
 	return accountFromDB(row)
 }
@@ -121,7 +160,24 @@ func validateCreateAccount(params CreateAccountParams) error {
 	default:
 		return fmt.Errorf("wallet: normal balance must be debit or credit")
 	}
+	switch params.Kind {
+	case KindWallet:
+		if params.OwnerID == nil {
+			return fmt.Errorf("wallet: wallet account requires an owner")
+		}
+	case KindSystem:
+		if params.OwnerID != nil {
+			return fmt.Errorf("wallet: system account must not have an owner")
+		}
+	default:
+		return fmt.Errorf("wallet: account kind must be wallet or system")
+	}
 	return nil
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 func accountFromDB(row db.Account) (Account, error) {
@@ -134,6 +190,7 @@ func accountFromDB(row db.Account) (Account, error) {
 		Name:          row.Name,
 		Currency:      row.Currency,
 		NormalBalance: NormalBalance(row.NormalBalance),
+		Kind:          AccountKind(row.Kind),
 		CreatedAt:     row.CreatedAt.Time,
 	}, nil
 }

@@ -11,15 +11,15 @@ import (
 func TestStoreGetLedgerTransactionIncludesEntries(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	debit, credit := seedPostingAccounts(t, store)
+	owned, settlement := seedPostingAccounts(t, store)
 	txID := uuid.New()
 
 	posted, err := store.PostLedgerTransaction(ctx, wallet.PostLedgerTransactionParams{
 		ID:          txID,
-		Description: "fund cash",
+		Description: "deposit",
 		Entries: []wallet.EntryInput{
-			{AccountID: debit.ID, Direction: wallet.EntryDirectionDebit, Amount: 100, Currency: "USD"},
-			{AccountID: credit.ID, Direction: wallet.EntryDirectionCredit, Amount: 100, Currency: "USD"},
+			{AccountID: settlement.ID, Direction: wallet.EntryDirectionDebit, Amount: 100, Currency: "USD"},
+			{AccountID: owned.ID, Direction: wallet.EntryDirectionCredit, Amount: 100, Currency: "USD"},
 		},
 	})
 	if err != nil {
@@ -33,8 +33,8 @@ func TestStoreGetLedgerTransactionIncludesEntries(t *testing.T) {
 	if got.ID != txID {
 		t.Fatalf("ID: got %v want %v", got.ID, txID)
 	}
-	if got.Description != "fund cash" {
-		t.Fatalf("Description: got %q want %q", got.Description, "fund cash")
+	if got.Description != "deposit" {
+		t.Fatalf("Description: got %q want %q", got.Description, "deposit")
 	}
 	if got.CreatedAt.IsZero() {
 		t.Fatal("CreatedAt: expected non-zero")
@@ -50,19 +50,19 @@ func TestStoreGetLedgerTransactionIncludesEntries(t *testing.T) {
 		}
 		byAccount[e.AccountID] = e
 	}
-	debitEntry, ok := byAccount[debit.ID]
+	settlementEntry, ok := byAccount[settlement.ID]
 	if !ok {
-		t.Fatal("missing debit Entry")
+		t.Fatal("missing settlement Entry")
 	}
-	if debitEntry.Direction != wallet.EntryDirectionDebit || debitEntry.Amount != 100 || debitEntry.Currency != "USD" {
-		t.Fatalf("debit Entry: %+v", debitEntry)
+	if settlementEntry.Direction != wallet.EntryDirectionDebit || settlementEntry.Amount != 100 || settlementEntry.Currency != "USD" {
+		t.Fatalf("settlement Entry: %+v", settlementEntry)
 	}
-	creditEntry, ok := byAccount[credit.ID]
+	ownedEntry, ok := byAccount[owned.ID]
 	if !ok {
-		t.Fatal("missing credit Entry")
+		t.Fatal("missing owned Entry")
 	}
-	if creditEntry.Direction != wallet.EntryDirectionCredit || creditEntry.Amount != 100 || creditEntry.Currency != "USD" {
-		t.Fatalf("credit Entry: %+v", creditEntry)
+	if ownedEntry.Direction != wallet.EntryDirectionCredit || ownedEntry.Amount != 100 || ownedEntry.Currency != "USD" {
+		t.Fatalf("owned Entry: %+v", ownedEntry)
 	}
 
 	if posted.ID != got.ID || len(posted.Entries) != len(got.Entries) {
@@ -73,126 +73,126 @@ func TestStoreGetLedgerTransactionIncludesEntries(t *testing.T) {
 func TestStoreListEntriesByAccountIncludesPostedLines(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	debit, credit := seedPostingAccounts(t, store)
+	owned, settlement := seedPostingAccounts(t, store)
 	txID := uuid.New()
 
 	_, err := store.PostLedgerTransaction(ctx, wallet.PostLedgerTransactionParams{
 		ID:          txID,
-		Description: "fund cash",
+		Description: "deposit",
 		Entries: []wallet.EntryInput{
-			{AccountID: debit.ID, Direction: wallet.EntryDirectionDebit, Amount: 250, Currency: "USD"},
-			{AccountID: credit.ID, Direction: wallet.EntryDirectionCredit, Amount: 250, Currency: "USD"},
+			{AccountID: settlement.ID, Direction: wallet.EntryDirectionDebit, Amount: 250, Currency: "USD"},
+			{AccountID: owned.ID, Direction: wallet.EntryDirectionCredit, Amount: 250, Currency: "USD"},
 		},
 	})
 	if err != nil {
 		t.Fatalf("PostLedgerTransaction: %v", err)
 	}
 
-	debitEntries, err := store.ListEntriesByAccount(ctx, debit.ID)
+	ownedEntries, err := store.ListEntriesByAccount(ctx, owned.ID)
 	if err != nil {
-		t.Fatalf("ListEntriesByAccount(debit): %v", err)
+		t.Fatalf("ListEntriesByAccount(owned): %v", err)
 	}
-	if len(debitEntries) != 1 {
-		t.Fatalf("debit Entries len: got %d want 1", len(debitEntries))
+	if len(ownedEntries) != 1 {
+		t.Fatalf("owned Entries len: got %d want 1", len(ownedEntries))
 	}
-	if debitEntries[0].TransactionID != txID ||
-		debitEntries[0].AccountID != debit.ID ||
-		debitEntries[0].Direction != wallet.EntryDirectionDebit ||
-		debitEntries[0].Amount != 250 ||
-		debitEntries[0].Currency != "USD" {
-		t.Fatalf("debit Entry: %+v", debitEntries[0])
+	if ownedEntries[0].TransactionID != txID ||
+		ownedEntries[0].AccountID != owned.ID ||
+		ownedEntries[0].Direction != wallet.EntryDirectionCredit ||
+		ownedEntries[0].Amount != 250 ||
+		ownedEntries[0].Currency != "USD" {
+		t.Fatalf("owned Entry: %+v", ownedEntries[0])
 	}
 
-	creditEntries, err := store.ListEntriesByAccount(ctx, credit.ID)
+	settlementEntries, err := store.ListEntriesByAccount(ctx, settlement.ID)
 	if err != nil {
-		t.Fatalf("ListEntriesByAccount(credit): %v", err)
+		t.Fatalf("ListEntriesByAccount(settlement): %v", err)
 	}
-	if len(creditEntries) != 1 {
-		t.Fatalf("credit Entries len: got %d want 1", len(creditEntries))
+	if len(settlementEntries) != 1 {
+		t.Fatalf("settlement Entries len: got %d want 1", len(settlementEntries))
 	}
-	if creditEntries[0].TransactionID != txID ||
-		creditEntries[0].AccountID != credit.ID ||
-		creditEntries[0].Direction != wallet.EntryDirectionCredit ||
-		creditEntries[0].Amount != 250 {
-		t.Fatalf("credit Entry: %+v", creditEntries[0])
+	if settlementEntries[0].TransactionID != txID ||
+		settlementEntries[0].AccountID != settlement.ID ||
+		settlementEntries[0].Direction != wallet.EntryDirectionDebit ||
+		settlementEntries[0].Amount != 250 {
+		t.Fatalf("settlement Entry: %+v", settlementEntries[0])
 	}
 }
 
 func TestStoreGetAccountBalanceMatchesNormalBalanceSemantics(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	debit, credit := seedPostingAccounts(t, store)
+	owned, settlement := seedPostingAccounts(t, store)
 
-	zeroDebit, err := store.GetAccountBalance(ctx, debit.ID)
+	zeroOwned, err := store.GetAccountBalance(ctx, owned.ID)
 	if err != nil {
-		t.Fatalf("GetAccountBalance(debit before post): %v", err)
+		t.Fatalf("GetAccountBalance(owned before post): %v", err)
 	}
-	if zeroDebit.AccountID != debit.ID || zeroDebit.Currency != "USD" || zeroDebit.Balance != 0 {
-		t.Fatalf("debit balance before post: %+v", zeroDebit)
+	if zeroOwned.AccountID != owned.ID || zeroOwned.Currency != "USD" || zeroOwned.Balance != 0 {
+		t.Fatalf("owned balance before post: %+v", zeroOwned)
 	}
-	zeroCredit, err := store.GetAccountBalance(ctx, credit.ID)
+	zeroSettlement, err := store.GetAccountBalance(ctx, settlement.ID)
 	if err != nil {
-		t.Fatalf("GetAccountBalance(credit before post): %v", err)
+		t.Fatalf("GetAccountBalance(settlement before post): %v", err)
 	}
-	if zeroCredit.Balance != 0 {
-		t.Fatalf("credit balance before post: %+v", zeroCredit)
+	if zeroSettlement.Balance != 0 {
+		t.Fatalf("settlement balance before post: %+v", zeroSettlement)
 	}
 
 	_, err = store.PostLedgerTransaction(ctx, wallet.PostLedgerTransactionParams{
 		ID:          uuid.New(),
-		Description: "fund cash",
+		Description: "deposit",
 		Entries: []wallet.EntryInput{
-			{AccountID: debit.ID, Direction: wallet.EntryDirectionDebit, Amount: 100, Currency: "USD"},
-			{AccountID: credit.ID, Direction: wallet.EntryDirectionCredit, Amount: 100, Currency: "USD"},
+			{AccountID: settlement.ID, Direction: wallet.EntryDirectionDebit, Amount: 100, Currency: "USD"},
+			{AccountID: owned.ID, Direction: wallet.EntryDirectionCredit, Amount: 100, Currency: "USD"},
 		},
 	})
 	if err != nil {
 		t.Fatalf("PostLedgerTransaction: %v", err)
 	}
 
-	// Debit-normal Account: debit increases balance.
-	debitBal, err := store.GetAccountBalance(ctx, debit.ID)
+	// Debit-normal Settlement: debit increases balance.
+	settlementBal, err := store.GetAccountBalance(ctx, settlement.ID)
 	if err != nil {
-		t.Fatalf("GetAccountBalance(debit): %v", err)
+		t.Fatalf("GetAccountBalance(settlement): %v", err)
 	}
-	if debitBal.Balance != 100 {
-		t.Fatalf("debit-normal balance: got %d want 100", debitBal.Balance)
+	if settlementBal.Balance != 100 {
+		t.Fatalf("settlement debit-normal balance: got %d want 100", settlementBal.Balance)
 	}
 
-	// Credit-normal Account: credit increases balance.
-	creditBal, err := store.GetAccountBalance(ctx, credit.ID)
+	// Credit-normal owned Account: credit increases balance.
+	ownedBal, err := store.GetAccountBalance(ctx, owned.ID)
 	if err != nil {
-		t.Fatalf("GetAccountBalance(credit): %v", err)
+		t.Fatalf("GetAccountBalance(owned): %v", err)
 	}
-	if creditBal.Balance != 100 {
-		t.Fatalf("credit-normal balance: got %d want 100", creditBal.Balance)
+	if ownedBal.Balance != 100 {
+		t.Fatalf("owned credit-normal balance: got %d want 100", ownedBal.Balance)
 	}
 
 	_, err = store.PostLedgerTransaction(ctx, wallet.PostLedgerTransactionParams{
 		ID:          uuid.New(),
-		Description: "spend cash",
+		Description: "withdraw",
 		Entries: []wallet.EntryInput{
-			{AccountID: debit.ID, Direction: wallet.EntryDirectionCredit, Amount: 40, Currency: "USD"},
-			{AccountID: credit.ID, Direction: wallet.EntryDirectionDebit, Amount: 40, Currency: "USD"},
+			{AccountID: owned.ID, Direction: wallet.EntryDirectionDebit, Amount: 40, Currency: "USD"},
+			{AccountID: settlement.ID, Direction: wallet.EntryDirectionCredit, Amount: 40, Currency: "USD"},
 		},
 	})
 	if err != nil {
-		t.Fatalf("PostLedgerTransaction(spend): %v", err)
+		t.Fatalf("PostLedgerTransaction(withdraw): %v", err)
 	}
 
-	debitBal, err = store.GetAccountBalance(ctx, debit.ID)
+	ownedBal, err = store.GetAccountBalance(ctx, owned.ID)
 	if err != nil {
-		t.Fatalf("GetAccountBalance(debit after spend): %v", err)
+		t.Fatalf("GetAccountBalance(owned after withdraw): %v", err)
 	}
-	if debitBal.Balance != 60 {
-		t.Fatalf("debit-normal after opposing Entry: got %d want 60", debitBal.Balance)
+	if ownedBal.Balance != 60 {
+		t.Fatalf("owned after opposing Entry: got %d want 60", ownedBal.Balance)
 	}
 
-	creditBal, err = store.GetAccountBalance(ctx, credit.ID)
+	settlementBal, err = store.GetAccountBalance(ctx, settlement.ID)
 	if err != nil {
-		t.Fatalf("GetAccountBalance(credit after spend): %v", err)
+		t.Fatalf("GetAccountBalance(settlement after withdraw): %v", err)
 	}
-	if creditBal.Balance != 60 {
-		t.Fatalf("credit-normal after opposing Entry: got %d want 60", creditBal.Balance)
+	if settlementBal.Balance != 60 {
+		t.Fatalf("settlement after opposing Entry: got %d want 60", settlementBal.Balance)
 	}
 }

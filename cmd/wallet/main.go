@@ -53,8 +53,12 @@ func main() {
 	gate := wallet.NewReadyGate()
 	gate.SetReady(true)
 
+	store := wallet.NewStore(pool)
+	svc := wallet.NewService(store)
+
 	mux := http.NewServeMux()
 	wallet.NewHealthHandler(pool, gate).Register(mux)
+	wallet.NewHandler(svc).Register(mux)
 	mux.HandleFunc("/", httpx.NotFound)
 
 	srv := &http.Server{

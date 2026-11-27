@@ -2,8 +2,10 @@ package wallet
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/Ammarmyp/payments/internal/platform/apperr"
 	"github.com/google/uuid"
@@ -14,6 +16,12 @@ const SettlementAccount = "settlement"
 
 // MaxAmount is the largest single deposit in minor units.
 const MaxAmount int64 = 100_000_000
+
+// DefaultPageSize is the Entries page size when limit is omitted.
+const DefaultPageSize = 20
+
+// MaxPageSize is the largest Entries page size a client may request.
+const MaxPageSize = 100
 
 // ErrWalletNotFound means the requested owned Account does not exist (or is not visible).
 var ErrWalletNotFound = fmt.Errorf("wallet: %w", apperr.ErrNotFound)
@@ -147,6 +155,71 @@ func (s *Service) Deposit(ctx context.Context, id uuid.UUID, amount int64, curre
 		ID:    posted.ID,
 		Money: Money{Amount: amount, Currency: account.Currency},
 	}, nil
+}
+
+// EntriesPage is one page of owned-Account Entries with an optional next cursor.
+type EntriesPage struct {
+	Entries    []Entry
+	NextCursor string
+}
+
+// Entries lists Entries for an owned Account newest-first with keyset paging.
+// limit 0 means DefaultPageSize; values outside 1..MaxPageSize are rejected.
+func (s *Service) Entries(ctx context.Context, id uuid.UUID, limit int, cursor string) (EntriesPage, error) {
+	if _, err := s.ownedAccount(ctx, id); err != nil {
+		return EntriesPage{}, err
+	}
+
+	if limit == 0 {
+		limit = DefaultPageSize
+	}
+	var v apperr.ValidationError
+	if limit < 1 || limit > MaxPageSize {
+		v.Add("limit", "out of range")
+	}
+	var beforeID *int64
+	if cursor != "" {
+		decoded, err := decodeEntryCursor(cursor)
+		if err != nil {
+			v.Add("cursor", "invalid cursor")
+		} else {
+			beforeID = &decoded
+		}
+	}
+	if err := v.Err(); err != nil {
+		return EntriesPage{}, err
+	}
+
+	rows, err := s.store.ListEntriesByAccountKeyset(ctx, id, beforeID, int32(limit+1))
+	if err != nil {
+		return EntriesPage{}, fmt.Errorf("wallet: list entries: %w", err)
+	}
+
+	nextCursor := ""
+	if len(rows) > limit {
+		nextCursor = encodeEntryCursor(rows[limit-1].ID)
+		rows = rows[:limit]
+	}
+	if rows == nil {
+		rows = []Entry{}
+	}
+	return EntriesPage{Entries: rows, NextCursor: nextCursor}, nil
+}
+
+func encodeEntryCursor(id int64) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatInt(id, 10)))
+}
+
+func decodeEntryCursor(cursor string) (int64, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return 0, err
+	}
+	id, err := strconv.ParseInt(string(raw), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("invalid entry id")
+	}
+	return id, nil
 }
 
 func (s *Service) ownedAccount(ctx context.Context, id uuid.UUID) (Account, error) {

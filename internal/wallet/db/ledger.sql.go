@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createEntry = `-- name: CreateEntry :one
@@ -97,6 +98,49 @@ ORDER BY created_at, id
 
 func (q *Queries) ListEntriesByAccount(ctx context.Context, accountID uuid.UUID) ([]Entry, error) {
 	rows, err := q.db.Query(ctx, listEntriesByAccount, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Entry{}
+	for rows.Next() {
+		var i Entry
+		if err := rows.Scan(
+			&i.ID,
+			&i.TransactionID,
+			&i.AccountID,
+			&i.Direction,
+			&i.Amount,
+			&i.Currency,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEntriesByAccountKeyset = `-- name: ListEntriesByAccountKeyset :many
+SELECT id, transaction_id, account_id, direction, amount, currency, created_at
+FROM entries
+WHERE account_id = $1
+  AND ($2::bigint IS NULL OR id < $2)
+ORDER BY id DESC
+LIMIT $3
+`
+
+type ListEntriesByAccountKeysetParams struct {
+	AccountID uuid.UUID
+	BeforeID  pgtype.Int8
+	PageLimit int32
+}
+
+func (q *Queries) ListEntriesByAccountKeyset(ctx context.Context, arg ListEntriesByAccountKeysetParams) ([]Entry, error) {
+	rows, err := q.db.Query(ctx, listEntriesByAccountKeyset, arg.AccountID, arg.BeforeID, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}

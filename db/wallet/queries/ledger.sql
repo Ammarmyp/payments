@@ -35,3 +35,11 @@ SELECT *
 FROM entries
 WHERE account_id = $1
 ORDER BY created_at, id;
+
+-- name: ListEntriesByAccountKeyset :many
+SELECT *
+FROM entries
+WHERE account_id = sqlc.arg(account_id)
+  AND (sqlc.narg(before_id)::bigint IS NULL OR id < sqlc.narg(before_id))
+ORDER BY id DESC
+LIMIT sqlc.arg(page_limit);

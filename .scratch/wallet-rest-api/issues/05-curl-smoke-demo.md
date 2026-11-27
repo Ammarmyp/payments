@@ -4,9 +4,13 @@
 
 **Blocked by:** 04 (Page wallet Entries with keyset cursors).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Script documents prerequisites (bootstrap/migrate, `make run-wallet`, base URL)
-- [ ] Script exercises all five endpoints end-to-end with sample Owner/Currency and a deposit Amount
-- [ ] Script shows how to follow next_cursor for a second entries page when present
-- [ ] No frontend or extra service binary is introduced
+- [x] Script documents prerequisites (bootstrap/migrate, `make run-wallet`, base URL)
+- [x] Script exercises all five endpoints end-to-end with sample Owner/Currency and a deposit Amount
+- [x] Script shows how to follow next_cursor for a second entries page when present
+- [x] No frontend or extra service binary is introduced
+
+## Answer
+
+Added `scripts/smoke-wallet.sh`: documents bootstrap/`make run-wallet`/BASE_URL, exercises create → get → balance → deposit → entries, and follows `next_cursor` after multiple deposits with `limit=2`. Verified live against `:8081`. No frontend/binary. No commit (per request).

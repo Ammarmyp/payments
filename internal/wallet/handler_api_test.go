@@ -168,6 +168,153 @@ func TestUnmatchedRouteReturnsJSON404(t *testing.T) {
 	assertAPIError(t, rec, http.StatusNotFound, "not_found", "")
 }
 
+func TestEntriesOnNewWalletAreEmpty(t *testing.T) {
+	h := newAPIHandler(t)
+	created := createWallet(t, h, uuid.New().String(), "USD")
+
+	rec := apiRequest(t, h, http.MethodGet, "/v1/wallets/"+created.ID+"/entries", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d\nbody=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	page := decodeEntriesPage(t, rec)
+	if len(page.Entries) != 0 {
+		t.Fatalf("entries = %#v, want empty", page.Entries)
+	}
+	if page.NextCursor != "" {
+		t.Fatalf("next_cursor = %q, want empty", page.NextCursor)
+	}
+}
+
+func TestEntriesNewestFirstAfterDeposits(t *testing.T) {
+	h := newAPIHandler(t)
+	created := createWallet(t, h, uuid.New().String(), "USD")
+	deposit(t, h, created.ID, 100, "USD")
+	deposit(t, h, created.ID, 200, "USD")
+	deposit(t, h, created.ID, 300, "USD")
+
+	rec := apiRequest(t, h, http.MethodGet, "/v1/wallets/"+created.ID+"/entries", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d\nbody=%s", rec.Code, rec.Body.String())
+	}
+	page := decodeEntriesPage(t, rec)
+	if len(page.Entries) != 3 {
+		t.Fatalf("len(entries) = %d, want 3\n%#v", len(page.Entries), page.Entries)
+	}
+	if page.NextCursor != "" {
+		t.Fatalf("next_cursor = %q, want empty", page.NextCursor)
+	}
+	amounts := []int64{page.Entries[0].Amount, page.Entries[1].Amount, page.Entries[2].Amount}
+	if amounts[0] != 300 || amounts[1] != 200 || amounts[2] != 100 {
+		t.Fatalf("amounts newest-first = %v, want [300 200 100]", amounts)
+	}
+	for _, e := range page.Entries {
+		if e.Direction != "credit" || e.Currency != "USD" || e.TransactionID == "" || e.CreatedAt == "" {
+			t.Fatalf("entry shape: %#v", e)
+		}
+		if e.AccountID != "" {
+			t.Fatalf("account_id leaked: %#v", e)
+		}
+		if e.ID == "" {
+			t.Fatal("entry id empty")
+		}
+	}
+	firstID, err := page.Entries[0].ID.Int64()
+	if err != nil {
+		t.Fatalf("id: %v", err)
+	}
+	secondID, err := page.Entries[1].ID.Int64()
+	if err != nil {
+		t.Fatalf("id: %v", err)
+	}
+	if firstID <= secondID {
+		t.Fatalf("ids not descending: %d then %d", firstID, secondID)
+	}
+}
+
+func TestEntriesPagesWithCursor(t *testing.T) {
+	h := newAPIHandler(t)
+	created := createWallet(t, h, uuid.New().String(), "ETB")
+	for amount := int64(1); amount <= 5; amount++ {
+		deposit(t, h, created.ID, amount, "ETB")
+	}
+
+	first := apiRequest(t, h, http.MethodGet, "/v1/wallets/"+created.ID+"/entries?limit=2", nil)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d\nbody=%s", first.Code, first.Body.String())
+	}
+	page1 := decodeEntriesPage(t, first)
+	if len(page1.Entries) != 2 || page1.NextCursor == "" {
+		t.Fatalf("page1 = %#v, want 2 entries and next_cursor", page1)
+	}
+	if page1.Entries[0].Amount != 5 || page1.Entries[1].Amount != 4 {
+		t.Fatalf("page1 amounts = [%d %d], want [5 4]", page1.Entries[0].Amount, page1.Entries[1].Amount)
+	}
+
+	second := apiRequest(t, h, http.MethodGet, "/v1/wallets/"+created.ID+"/entries?limit=2&cursor="+page1.NextCursor, nil)
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d\nbody=%s", second.Code, second.Body.String())
+	}
+	page2 := decodeEntriesPage(t, second)
+	if len(page2.Entries) != 2 || page2.NextCursor == "" {
+		t.Fatalf("page2 = %#v, want 2 entries and next_cursor", page2)
+	}
+	if page2.Entries[0].Amount != 3 || page2.Entries[1].Amount != 2 {
+		t.Fatalf("page2 amounts = [%d %d], want [3 2]", page2.Entries[0].Amount, page2.Entries[1].Amount)
+	}
+
+	third := apiRequest(t, h, http.MethodGet, "/v1/wallets/"+created.ID+"/entries?limit=2&cursor="+page2.NextCursor, nil)
+	if third.Code != http.StatusOK {
+		t.Fatalf("third status = %d\nbody=%s", third.Code, third.Body.String())
+	}
+	page3 := decodeEntriesPage(t, third)
+	if len(page3.Entries) != 1 || page3.NextCursor != "" {
+		t.Fatalf("page3 = %#v, want 1 entry and empty next_cursor", page3)
+	}
+	if page3.Entries[0].Amount != 1 {
+		t.Fatalf("page3 amount = %d, want 1", page3.Entries[0].Amount)
+	}
+}
+
+func TestEntriesRejectsInvalidLimit(t *testing.T) {
+	h := newAPIHandler(t)
+	created := createWallet(t, h, uuid.New().String(), "USD")
+
+	rec := apiRequest(t, h, http.MethodGet, "/v1/wallets/"+created.ID+"/entries?limit=abc", nil)
+	assertAPIError(t, rec, http.StatusUnprocessableEntity, "invalid_input", "limit")
+
+	rec = apiRequest(t, h, http.MethodGet, "/v1/wallets/"+created.ID+"/entries?limit=0", nil)
+	assertAPIError(t, rec, http.StatusUnprocessableEntity, "invalid_input", "limit")
+
+	rec = apiRequest(t, h, http.MethodGet, "/v1/wallets/"+created.ID+"/entries?limit=101", nil)
+	assertAPIError(t, rec, http.StatusUnprocessableEntity, "invalid_input", "limit")
+}
+
+func TestEntriesRejectsInvalidCursor(t *testing.T) {
+	h := newAPIHandler(t)
+	created := createWallet(t, h, uuid.New().String(), "USD")
+
+	rec := apiRequest(t, h, http.MethodGet, "/v1/wallets/"+created.ID+"/entries?cursor=not-a-cursor", nil)
+	assertAPIError(t, rec, http.StatusUnprocessableEntity, "invalid_input", "cursor")
+}
+
+func TestEntriesMissingWalletIs404(t *testing.T) {
+	h := newAPIHandler(t)
+	rec := apiRequest(t, h, http.MethodGet, "/v1/wallets/"+uuid.New().String()+"/entries", nil)
+	assertAPIError(t, rec, http.StatusNotFound, "not_found", "")
+}
+
+func TestEntriesSystemAccountIs404(t *testing.T) {
+	h := newAPIHandler(t)
+	store := testStore(t)
+	settlement, err := store.SystemAccount(t.Context(), wallet.SettlementAccount, "USD")
+	if err != nil {
+		t.Fatalf("SystemAccount: %v", err)
+	}
+
+	rec := apiRequest(t, h, http.MethodGet, "/v1/wallets/"+settlement.ID.String()+"/entries", nil)
+	assertAPIError(t, rec, http.StatusNotFound, "not_found", "")
+}
+
 func TestDepositReturns201(t *testing.T) {
 	h := newAPIHandler(t)
 	created := createWallet(t, h, uuid.New().String(), "USD")
@@ -321,6 +468,33 @@ type walletBody struct {
 	NormalBalance string `json:"normal_balance"`
 }
 
+type entriesPageBody struct {
+	Entries    []entryBody `json:"entries"`
+	NextCursor string      `json:"next_cursor"`
+}
+
+type entryBody struct {
+	ID            json.Number `json:"id"`
+	Direction     string      `json:"direction"`
+	Amount        int64       `json:"amount"`
+	Currency      string      `json:"currency"`
+	TransactionID string      `json:"transaction_id"`
+	CreatedAt     string      `json:"created_at"`
+	AccountID     string      `json:"account_id"`
+}
+
+func decodeEntriesPage(t *testing.T, rec *httptest.ResponseRecorder) entriesPageBody {
+	t.Helper()
+	var page entriesPageBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode entries: %v\nbody=%s", err, rec.Body.String())
+	}
+	if page.Entries == nil {
+		t.Fatal("entries: want [] not null")
+	}
+	return page
+}
+
 func createWallet(t *testing.T, h http.Handler, ownerID, currency string) walletBody {
 	t.Helper()
 	rec := apiRequest(t, h, http.MethodPost, "/v1/wallets", map[string]string{
@@ -331,6 +505,17 @@ func createWallet(t *testing.T, h http.Handler, ownerID, currency string) wallet
 		t.Fatalf("create status = %d\nbody=%s", rec.Code, rec.Body.String())
 	}
 	return decodeWallet(t, rec)
+}
+
+func deposit(t *testing.T, h http.Handler, walletID string, amount int64, currency string) {
+	t.Helper()
+	rec := apiRequest(t, h, http.MethodPost, "/v1/wallets/"+walletID+"/deposits", map[string]any{
+		"amount":   amount,
+		"currency": currency,
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("deposit status = %d\nbody=%s", rec.Code, rec.Body.String())
+	}
 }
 
 func decodeWallet(t *testing.T, rec *httptest.ResponseRecorder) walletBody {

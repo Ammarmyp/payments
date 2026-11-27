@@ -24,6 +24,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /v1/wallets/{id}", httpx.HandlerFunc(h.get))
 	mux.Handle("GET /v1/wallets/{id}/balance", httpx.HandlerFunc(h.balance))
 	mux.Handle("POST /v1/wallets/{id}/deposits", httpx.HandlerFunc(h.deposit))
+	mux.Handle("GET /v1/wallets/{id}/entries", httpx.HandlerFunc(h.entries))
 }
 
 type createWalletRequest struct {
@@ -52,6 +53,20 @@ type depositResponse struct {
 	ID       string `json:"id"`
 	Amount   int64  `json:"amount"`
 	Currency string `json:"currency"`
+}
+
+type entryResponse struct {
+	ID            int64     `json:"id"`
+	Direction     string    `json:"direction"`
+	Amount        int64     `json:"amount"`
+	Currency      string    `json:"currency"`
+	TransactionID string    `json:"transaction_id"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type entriesResponse struct {
+	Entries    []entryResponse `json:"entries"`
+	NextCursor string          `json:"next_cursor"`
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
@@ -111,6 +126,38 @@ func (h *Handler) deposit(w http.ResponseWriter, r *http.Request) error {
 		Amount:   result.Money.Amount,
 		Currency: result.Money.Currency,
 	})
+	return nil
+}
+
+func (h *Handler) entries(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseWalletID(r)
+	if err != nil {
+		return err
+	}
+	limit, err := httpx.QueryInt(r, "limit", DefaultPageSize, 1, MaxPageSize)
+	if err != nil {
+		return err
+	}
+	cursor := r.URL.Query().Get("cursor")
+	page, err := h.svc.Entries(r.Context(), id, limit, cursor)
+	if err != nil {
+		return err
+	}
+	out := entriesResponse{
+		Entries:    make([]entryResponse, 0, len(page.Entries)),
+		NextCursor: page.NextCursor,
+	}
+	for _, e := range page.Entries {
+		out.Entries = append(out.Entries, entryResponse{
+			ID:            e.ID,
+			Direction:     string(e.Direction),
+			Amount:        e.Amount,
+			Currency:      e.Currency,
+			TransactionID: e.TransactionID.String(),
+			CreatedAt:     e.CreatedAt.UTC(),
+		})
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, out)
 	return nil
 }
 

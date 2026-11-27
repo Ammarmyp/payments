@@ -12,6 +12,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AccountKind string
+
+const (
+	AccountKindWallet AccountKind = "wallet"
+	AccountKindSystem AccountKind = "system"
+)
+
+func (e *AccountKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AccountKind(s)
+	case string:
+		*e = AccountKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AccountKind: %T", src)
+	}
+	return nil
+}
+
+type NullAccountKind struct {
+	AccountKind AccountKind
+	Valid       bool // Valid is true if AccountKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAccountKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.AccountKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AccountKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAccountKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AccountKind), nil
+}
+
 type EntryDirection string
 
 const (
@@ -61,6 +103,7 @@ type Account struct {
 	Currency      string
 	NormalBalance EntryDirection
 	CreatedAt     pgtype.Timestamptz
+	Kind          AccountKind
 }
 
 type AccountBalance struct {

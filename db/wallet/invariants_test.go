@@ -3,6 +3,7 @@ package wallet_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -34,22 +35,24 @@ func connect(t *testing.T) *pgx.Conn {
 	return conn
 }
 
-func seedAccounts(t *testing.T, conn *pgx.Conn) (debitAccount, creditAccount uuid.UUID) {
+// seedAccounts returns a debit-normal System Account and a credit-normal owned
+// Account (ADR-0002). Callers debit the system row and credit the owned row.
+func seedAccounts(t *testing.T, conn *pgx.Conn) (systemAccount, ownedAccount uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
-	debitAccount = uuid.New()
-	creditAccount = uuid.New()
+	systemAccount = uuid.New()
+	ownedAccount = uuid.New()
 
 	_, err := conn.Exec(ctx, `
-		INSERT INTO accounts (id, owner_id, name, currency, normal_balance)
+		INSERT INTO accounts (id, owner_id, name, currency, normal_balance, kind)
 		VALUES
-			($1, $2, 'cash', 'USD', 'debit'),
-			($3, NULL, 'clearing', 'USD', 'credit')
-	`, debitAccount, uuid.New(), creditAccount)
+			($1, NULL, $2, 'USD', 'debit', 'system'),
+			($3, $4, 'USD wallet', 'USD', 'credit', 'wallet')
+	`, systemAccount, fmt.Sprintf("sys-%s", systemAccount), ownedAccount, uuid.New())
 	if err != nil {
 		t.Fatalf("seed accounts: %v", err)
 	}
-	return debitAccount, creditAccount
+	return systemAccount, ownedAccount
 }
 
 func isPGCode(err error, code string) bool {
@@ -87,7 +90,7 @@ func TestLedgerTransactionRejectsEmptyCommit(t *testing.T) {
 func TestLedgerTransactionRejectsUnbalancedCommit(t *testing.T) {
 	conn := connect(t)
 	ctx := context.Background()
-	debitAccount, _ := seedAccounts(t, conn)
+	systemAccount, _ := seedAccounts(t, conn)
 	txID := uuid.New()
 
 	tx, err := conn.Begin(ctx)
@@ -105,7 +108,7 @@ func TestLedgerTransactionRejectsUnbalancedCommit(t *testing.T) {
 	_, err = tx.Exec(ctx, `
 		INSERT INTO entries (transaction_id, account_id, direction, amount, currency)
 		VALUES ($1, $2, 'debit', 100, 'USD')
-	`, txID, debitAccount)
+	`, txID, systemAccount)
 	if err != nil {
 		t.Fatalf("insert entry: %v", err)
 	}
@@ -122,7 +125,7 @@ func TestLedgerTransactionRejectsUnbalancedCommit(t *testing.T) {
 func TestLedgerTransactionAcceptsBalancedCommit(t *testing.T) {
 	conn := connect(t)
 	ctx := context.Background()
-	debitAccount, creditAccount := seedAccounts(t, conn)
+	systemAccount, ownedAccount := seedAccounts(t, conn)
 	txID := uuid.New()
 
 	tx, err := conn.Begin(ctx)
@@ -142,7 +145,7 @@ func TestLedgerTransactionAcceptsBalancedCommit(t *testing.T) {
 		VALUES
 			($1, $2, 'debit', 50, 'USD'),
 			($1, $3, 'credit', 50, 'USD')
-	`, txID, debitAccount, creditAccount)
+	`, txID, systemAccount, ownedAccount)
 	if err != nil {
 		t.Fatalf("insert entries: %v", err)
 	}
@@ -155,7 +158,7 @@ func TestLedgerTransactionAcceptsBalancedCommit(t *testing.T) {
 func postBalanced(t *testing.T, conn *pgx.Conn, description string, amount int64) (txID uuid.UUID, entryID int64) {
 	t.Helper()
 	ctx := context.Background()
-	debitAccount, creditAccount := seedAccounts(t, conn)
+	systemAccount, ownedAccount := seedAccounts(t, conn)
 	txID = uuid.New()
 
 	tx, err := conn.Begin(ctx)
@@ -174,14 +177,14 @@ func postBalanced(t *testing.T, conn *pgx.Conn, description string, amount int64
 		INSERT INTO entries (transaction_id, account_id, direction, amount, currency)
 		VALUES ($1, $2, 'debit', $3, 'USD')
 		RETURNING id
-	`, txID, debitAccount, amount).Scan(&entryID)
+	`, txID, systemAccount, amount).Scan(&entryID)
 	if err != nil {
 		t.Fatalf("insert debit entry: %v", err)
 	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO entries (transaction_id, account_id, direction, amount, currency)
 		VALUES ($1, $2, 'credit', $3, 'USD')
-	`, txID, creditAccount, amount)
+	`, txID, ownedAccount, amount)
 	if err != nil {
 		t.Fatalf("insert credit entry: %v", err)
 	}
@@ -238,7 +241,7 @@ func TestEntriesAreAppendOnly(t *testing.T) {
 func TestLedgerTransactionCreatedAtDefaults(t *testing.T) {
 	conn := connect(t)
 	ctx := context.Background()
-	debitAccount, creditAccount := seedAccounts(t, conn)
+	systemAccount, ownedAccount := seedAccounts(t, conn)
 	txID := uuid.New()
 
 	tx, err := conn.Begin(ctx)
@@ -258,7 +261,7 @@ func TestLedgerTransactionCreatedAtDefaults(t *testing.T) {
 		VALUES
 			($1, $2, 'debit', 5, 'USD'),
 			($1, $3, 'credit', 5, 'USD')
-	`, txID, debitAccount, creditAccount)
+	`, txID, systemAccount, ownedAccount)
 	if err != nil {
 		t.Fatalf("insert entries: %v", err)
 	}

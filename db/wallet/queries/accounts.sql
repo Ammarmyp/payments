@@ -4,9 +4,10 @@ INSERT INTO accounts (
     owner_id,
     name,
     currency,
-    normal_balance
+    normal_balance,
+    kind
 ) VALUES (
-    $1, $2, $3, $4, $5
+    $1, $2, $3, $4, $5, $6
 )
 RETURNING *;
 
@@ -14,6 +15,13 @@ RETURNING *;
 SELECT *
 FROM accounts
 WHERE id = $1;
+
+-- name: GetSystemAccount :one
+SELECT *
+FROM accounts
+WHERE kind = 'system'
+  AND name = $1
+  AND currency = $2;
 
 -- name: ListAccountsByOwner :many
 SELECT *

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Ammarmyp/payments/internal/wallet/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // AccountBalance is the Amount implied by an Account's Entries relative to its Normal Balance.
@@ -41,6 +43,26 @@ func (s *Store) ListEntriesByAccount(ctx context.Context, accountID uuid.UUID) (
 	rows, err := s.q.ListEntriesByAccount(ctx, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("wallet: list entries by account: %w", err)
+	}
+	return entriesFromDB(rows)
+}
+
+// ListEntriesByAccountKeyset returns up to limit Entries for an Account, newest
+// first by Entry id. When beforeID is set, only rows with id < beforeID are returned.
+func (s *Store) ListEntriesByAccountKeyset(ctx context.Context, accountID uuid.UUID, beforeID *int64, limit int32) ([]Entry, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("wallet: keyset limit must be positive")
+	}
+	params := db.ListEntriesByAccountKeysetParams{
+		AccountID: accountID,
+		PageLimit: limit,
+	}
+	if beforeID != nil {
+		params.BeforeID = pgtype.Int8{Int64: *beforeID, Valid: true}
+	}
+	rows, err := s.q.ListEntriesByAccountKeyset(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("wallet: list entries keyset: %w", err)
 	}
 	return entriesFromDB(rows)
 }

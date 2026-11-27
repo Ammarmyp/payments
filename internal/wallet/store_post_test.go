@@ -3,6 +3,7 @@ package wallet_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -11,32 +12,37 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func seedPostingAccounts(t *testing.T, store *wallet.Store) (debit, credit wallet.Account) {
+// seedPostingAccounts returns an owned credit-normal Account and a debit-normal
+// System Account (ADR-0002). A deposit-shaped post debits settlement and credits owned.
+func seedPostingAccounts(t *testing.T, store *wallet.Store) (owned, settlement wallet.Account) {
 	t.Helper()
 	ctx := context.Background()
 	owner := uuid.New()
 
-	debit, err := store.CreateAccount(ctx, wallet.CreateAccountParams{
+	owned, err := store.CreateAccount(ctx, wallet.CreateAccountParams{
 		ID:            uuid.New(),
 		OwnerID:       &owner,
-		Name:          "cash",
-		Currency:      "USD",
-		NormalBalance: wallet.NormalBalanceDebit,
-	})
-	if err != nil {
-		t.Fatalf("create debit Account: %v", err)
-	}
-	credit, err = store.CreateAccount(ctx, wallet.CreateAccountParams{
-		ID:            uuid.New(),
-		OwnerID:       nil,
-		Name:          "clearing",
+		Name:          "USD wallet",
 		Currency:      "USD",
 		NormalBalance: wallet.NormalBalanceCredit,
+		Kind:          wallet.KindWallet,
 	})
 	if err != nil {
-		t.Fatalf("create credit Account: %v", err)
+		t.Fatalf("create owned Account: %v", err)
 	}
-	return debit, credit
+	settlementID := uuid.New()
+	settlement, err = store.CreateAccount(ctx, wallet.CreateAccountParams{
+		ID:            settlementID,
+		OwnerID:       nil,
+		Name:          fmt.Sprintf("sys-%s", settlementID),
+		Currency:      "USD",
+		NormalBalance: wallet.NormalBalanceDebit,
+		Kind:          wallet.KindSystem,
+	})
+	if err != nil {
+		t.Fatalf("create settlement Account: %v", err)
+	}
+	return owned, settlement
 }
 
 func countLedgerRows(t *testing.T, pool *pgxpool.Pool, txID uuid.UUID) (txs, entries int64) {
@@ -55,15 +61,15 @@ func TestStorePostBalancedLedgerTransaction(t *testing.T) {
 	pool := testPool(t)
 	store := wallet.NewStore(pool)
 	ctx := context.Background()
-	debit, credit := seedPostingAccounts(t, store)
+	owned, settlement := seedPostingAccounts(t, store)
 	txID := uuid.New()
 
 	posted, err := store.PostLedgerTransaction(ctx, wallet.PostLedgerTransactionParams{
 		ID:          txID,
-		Description: "fund cash",
+		Description: "deposit",
 		Entries: []wallet.EntryInput{
-			{AccountID: debit.ID, Direction: wallet.EntryDirectionDebit, Amount: 100, Currency: "USD"},
-			{AccountID: credit.ID, Direction: wallet.EntryDirectionCredit, Amount: 100, Currency: "USD"},
+			{AccountID: settlement.ID, Direction: wallet.EntryDirectionDebit, Amount: 100, Currency: "USD"},
+			{AccountID: owned.ID, Direction: wallet.EntryDirectionCredit, Amount: 100, Currency: "USD"},
 		},
 	})
 	if err != nil {
@@ -72,7 +78,7 @@ func TestStorePostBalancedLedgerTransaction(t *testing.T) {
 	if posted.ID != txID {
 		t.Fatalf("ID: got %v want %v", posted.ID, txID)
 	}
-	if posted.Description != "fund cash" {
+	if posted.Description != "deposit" {
 		t.Fatalf("Description: got %q", posted.Description)
 	}
 	if len(posted.Entries) != 2 {
@@ -92,15 +98,15 @@ func TestStorePostRejectsUnbalancedLedgerTransaction(t *testing.T) {
 	pool := testPool(t)
 	store := wallet.NewStore(pool)
 	ctx := context.Background()
-	debit, credit := seedPostingAccounts(t, store)
+	owned, settlement := seedPostingAccounts(t, store)
 	txID := uuid.New()
 
 	_, err := store.PostLedgerTransaction(ctx, wallet.PostLedgerTransactionParams{
 		ID:          txID,
 		Description: "unbalanced",
 		Entries: []wallet.EntryInput{
-			{AccountID: debit.ID, Direction: wallet.EntryDirectionDebit, Amount: 100, Currency: "USD"},
-			{AccountID: credit.ID, Direction: wallet.EntryDirectionCredit, Amount: 50, Currency: "USD"},
+			{AccountID: settlement.ID, Direction: wallet.EntryDirectionDebit, Amount: 100, Currency: "USD"},
+			{AccountID: owned.ID, Direction: wallet.EntryDirectionCredit, Amount: 50, Currency: "USD"},
 		},
 	})
 	if !errors.Is(err, wallet.ErrUnbalancedLedgerTransaction) {
@@ -138,7 +144,7 @@ func TestStorePostRollsBackOnMidPostFailure(t *testing.T) {
 	pool := testPool(t)
 	store := wallet.NewStore(pool)
 	ctx := context.Background()
-	debit, credit := seedPostingAccounts(t, store)
+	owned, settlement := seedPostingAccounts(t, store)
 	txID := uuid.New()
 	missingAccount := uuid.New()
 
@@ -146,8 +152,8 @@ func TestStorePostRollsBackOnMidPostFailure(t *testing.T) {
 		ID:          txID,
 		Description: "fk failure",
 		Entries: []wallet.EntryInput{
-			{AccountID: debit.ID, Direction: wallet.EntryDirectionDebit, Amount: 25, Currency: "USD"},
-			{AccountID: credit.ID, Direction: wallet.EntryDirectionCredit, Amount: 25, Currency: "USD"},
+			{AccountID: settlement.ID, Direction: wallet.EntryDirectionDebit, Amount: 25, Currency: "USD"},
+			{AccountID: owned.ID, Direction: wallet.EntryDirectionCredit, Amount: 25, Currency: "USD"},
 			// Balanced overall, but unknown Account triggers FK failure after earlier inserts.
 			{AccountID: missingAccount, Direction: wallet.EntryDirectionDebit, Amount: 10, Currency: "USD"},
 			{AccountID: missingAccount, Direction: wallet.EntryDirectionCredit, Amount: 10, Currency: "USD"},
@@ -167,7 +173,7 @@ func TestStorePostConcurrentBalancedLedgerTransactions(t *testing.T) {
 	pool := testPool(t)
 	store := wallet.NewStore(pool)
 	ctx := context.Background()
-	debit, credit := seedPostingAccounts(t, store)
+	owned, settlement := seedPostingAccounts(t, store)
 
 	const workers = 8
 	var wg sync.WaitGroup
@@ -183,8 +189,8 @@ func TestStorePostConcurrentBalancedLedgerTransactions(t *testing.T) {
 				ID:          txID,
 				Description: "concurrent",
 				Entries: []wallet.EntryInput{
-					{AccountID: debit.ID, Direction: wallet.EntryDirectionDebit, Amount: 1, Currency: "USD"},
-					{AccountID: credit.ID, Direction: wallet.EntryDirectionCredit, Amount: 1, Currency: "USD"},
+					{AccountID: settlement.ID, Direction: wallet.EntryDirectionDebit, Amount: 1, Currency: "USD"},
+					{AccountID: owned.ID, Direction: wallet.EntryDirectionCredit, Amount: 1, Currency: "USD"},
 				},
 			})
 			errs <- err
@@ -205,14 +211,14 @@ func TestStorePostConcurrentBalancedLedgerTransactions(t *testing.T) {
 		}
 	}
 
-	var debitBal, creditBal int64
-	if err := pool.QueryRow(ctx, `SELECT balance FROM account_balances WHERE account_id = $1`, debit.ID).Scan(&debitBal); err != nil {
-		t.Fatalf("debit balance: %v", err)
+	var ownedBal, settlementBal int64
+	if err := pool.QueryRow(ctx, `SELECT balance FROM account_balances WHERE account_id = $1`, owned.ID).Scan(&ownedBal); err != nil {
+		t.Fatalf("owned balance: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT balance FROM account_balances WHERE account_id = $1`, credit.ID).Scan(&creditBal); err != nil {
-		t.Fatalf("credit balance: %v", err)
+	if err := pool.QueryRow(ctx, `SELECT balance FROM account_balances WHERE account_id = $1`, settlement.ID).Scan(&settlementBal); err != nil {
+		t.Fatalf("settlement balance: %v", err)
 	}
-	if debitBal != workers || creditBal != workers {
-		t.Fatalf("balances: debit=%d credit=%d want %d each", debitBal, creditBal, workers)
+	if ownedBal != workers || settlementBal != workers {
+		t.Fatalf("balances: owned=%d settlement=%d want %d each", ownedBal, settlementBal, workers)
 	}
 }
